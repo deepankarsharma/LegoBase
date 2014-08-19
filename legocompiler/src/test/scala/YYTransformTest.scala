@@ -11,6 +11,7 @@ import ch.epfl.data.pardis.ir.pardisTypeImplicits._
 import ch.epfl.data.pardis.optimization._
 import ch.epfl.yinyang._
 import ch.epfl.yinyang.typetransformers._
+import storagemanager.K2DBScanner
 
 import deep._
 
@@ -117,8 +118,9 @@ class YYTransformTest extends FlatSpec with ShouldMatchers with Inspectors {
 
     val dslTransformer = new TestTransformer(IR) {
       import ch.epfl.data.pardis.ir.CTypes._
+      import yyTransformer.repTtoT
 
-      def fscanf(f: Any, s: String, l: Any*): Int = ???
+      def fscanf(f: K2DBScanner, s: String, l: Any*): Int = ???
       def popen(f: String, s: Any): FILE = ???
       def pclose(f: FILE): Unit = ???
       def eof(): Int = ???

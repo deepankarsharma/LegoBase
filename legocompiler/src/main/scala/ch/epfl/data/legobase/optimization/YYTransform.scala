@@ -60,6 +60,7 @@ package object yyTransformer {
           q"class $className extends $parentName { ..${stmts.map(transform(_))} }"
         case tq"${ _ }.$tp[..$tpArgs]"              => tq"to.$tp[..$tpArgs]"
         case q"this.lift"                           => q"this.lift"
+        case q"repTtoT"                             => q"this.repTtoT"
         case q"${ _ }.this.$method"                 => q"to.$method"
         case Apply(Ident(virt @ TermName(t)), args) => q"to.$virt(..${args.map(transform(_))})"
         case _                                      => super.transform(tree)
@@ -71,23 +72,34 @@ package object yyTransformer {
     }
   }
 
+  class NonNestedPardisRepTransformer[C <: Context](override val c: C) extends PardisRepTransformer[C](c) {
+    import c.universe._
+
+    override def rep(inType: Type): Tree = inType match {
+      case TypeRef(_, s, args) if s.fullName == "ch.epfl.data.pardis.ir.Expression" || s.fullName == "ch.epfl.data.pardis.ir.Base.Rep" =>
+        AppliedTypeTree(Select(This(TypeName(className)), TypeName("Rep")), args.map(TypeTree(_)))
+      case _ =>
+        super.rep(inType)
+    }
+  }
+
   def dsl[T](block: => T): Rep[T] = macro _dsl[T]
 
   def _dsl[T](c: Context)(block: c.Expr[T]): c.Expr[Rep[T]] =
     YYTransformer[c.type, T](c)(
       "ch.epfl.data.legobase.deep.DeepYY",
-      new PardisRepTransformer[c.type](c),
+      new NonNestedPardisRepTransformer[c.type](c),
       None,
       None,
-      Map("shallow" -> false, "debug" -> 3, "featureAnalysing" -> false, "virtualizeLambda" -> true, "ascriptionTransforming" -> false))(block).asInstanceOf[c.Expr[Rep[T]]]
+      Map("shallow" -> false, "debug" -> 0, "featureAnalysing" -> false, "virtualizeLambda" -> true, "ascriptionTransforming" -> true))(block).asInstanceOf[c.Expr[Rep[T]]]
 
   def todsl[T](block: => T): Rep[T] = macro _todsl[T]
 
   def _todsl[T](c: Context)(block: c.Expr[T]): c.Expr[Rep[T]] =
     YYTransformer[c.type, T](c)(
       "ch.epfl.data.legobase.deep.DeepYY",
-      new PardisRepTransformer[c.type](c),
+      new NonNestedPardisRepTransformer[c.type](c),
       Some(new IRPostProcessing(c)),
       None,
-      Map("shallow" -> false, "debug" -> 3, "featureAnalysing" -> false, "virtualizeLambda" -> true, "ascriptionTransforming" -> false))(block).asInstanceOf[c.Expr[Rep[T]]]
+      Map("shallow" -> false, "debug" -> 0, "featureAnalysing" -> false, "virtualizeLambda" -> true, "ascriptionTransforming" -> true))(block).asInstanceOf[c.Expr[Rep[T]]]
 }
