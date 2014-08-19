@@ -133,12 +133,13 @@ class YYTransformTest extends FlatSpec with ShouldMatchers with Inspectors {
       def structCopy[T](s: Pointer[T], orig: T): Unit = ???
       def gettimeofday(tv: Pointer[TimeVal]): Unit = ???
       def timeval_subtract(tv1: Pointer[TimeVal], tv2: Pointer[TimeVal], tv3: Pointer[TimeVal]): Long = ???
+      def readVar[T](v: T): T = ???
 
       override def transformDef[T: PardisType](node: from.Def[T]): to.Def[T] = node match {
         case IR.K2DBScannerNext_int(s) =>
           val v = yyTransformer.todsl {
             var allocatedV: Int = 0
-            val v = allocatedV
+            val v = readVar(allocatedV)
             if (fscanf(s, "%d|", &(v)) == eof) break else ()
             v
           }

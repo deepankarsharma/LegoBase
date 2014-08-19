@@ -40,7 +40,7 @@ abstract class DeepYY extends DeepDSL with BaseYinYang with FullyUnstaged with S
 
   def main(): Any
 
-  implicit def repTtoT[T](rep: Rep[T]): Rep[T] = rep
+  def repTtoT[T](rep: Rep[T]): Rep[T] = rep
 
   override def stage[T](): T = main().asInstanceOf[T]
 }
@@ -101,5 +101,5 @@ package object yyTransformer {
       new NonNestedPardisRepTransformer[c.type](c),
       Some(new IRPostProcessing(c)),
       None,
-      Map("shallow" -> false, "debug" -> 0, "featureAnalysing" -> false, "virtualizeLambda" -> true, "ascriptionTransforming" -> true))(block).asInstanceOf[c.Expr[Rep[T]]]
+      Map("shallow" -> false, "debug" -> 0, "featureAnalysing" -> false, "virtualizeLambda" -> true, "ascriptionTransforming" -> false))(block).asInstanceOf[c.Expr[Rep[T]]]
 }
