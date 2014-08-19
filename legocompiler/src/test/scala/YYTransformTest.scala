@@ -96,4 +96,63 @@ class YYTransformTest extends FlatSpec with ShouldMatchers with Inspectors {
       n.isInstanceOf[PardisIfThenElse[_]] should be(true)
     }
   }
+
+  class TestTransformer(override val IR: ScalaToC) extends TopDownTransformerTraverser[ScalaToC] {
+    import CNodes._
+    import CTypes._
+  }
+
+  "Transformations using yyTransform" should "make lowering to C nicer" in {
+    implicit val IR = new ScalaToC {}
+    val expectedTransformer = new TestTransformer(IR) {
+      import IR._
+      override def transformDef[T: PardisType](node: from.Def[T]): to.Def[T] = node match {
+        case K2DBScannerNext_int(s) =>
+          val v = readVar(__newVar[Int](0))
+          __ifThenElse[Unit](infix_==(fscanf(s, unit("%d|"), &(v)), eof), break, unit(()))
+          ReadVal(v)
+        case _ => super.transformDef(node)
+      }
+    }
+
+    val dslTransformer = new TestTransformer(IR) {
+      import ch.epfl.data.pardis.ir.CTypes._
+
+      def fscanf(f: Any, s: String, l: Any*): Int = ???
+      def popen(f: String, s: Any): FILE = ???
+      def pclose(f: FILE): Unit = ???
+      def eof(): Int = ???
+      // Control statements
+      def break(): Unit = ???
+      // Memory reference and allocation
+      def &[T](v: T): Pointer[T] = ???
+      def *[T](v: Pointer[T]): T = ???
+      def malloc[T](numElems: Int): Pointer[T] = ???
+      def structCopy[T](s: Pointer[T], orig: T): Unit = ???
+      def gettimeofday(tv: Pointer[TimeVal]): Unit = ???
+      def timeval_subtract(tv1: Pointer[TimeVal], tv2: Pointer[TimeVal], tv3: Pointer[TimeVal]): Long = ???
+
+      override def transformDef[T: PardisType](node: from.Def[T]): to.Def[T] = node match {
+        case IR.K2DBScannerNext_int(s) =>
+          val v = yyTransformer.todsl {
+            var allocatedV: Int = 0
+            val v = allocatedV
+            if (fscanf(s, "%d|", &(v)) == eof) break else ()
+            v
+          }
+          IR.ReadVal(v)
+        case _ => super.transformDef(node)
+      }
+    }
+
+    val prog = IR.reifyBlock {
+      val scanner = IR.k2DBScannerNew(IR.unit("filename"))
+      IR.k2DBScannerNext_int(scanner)
+    }
+
+    println(s"ORIGINAL: $prog")
+    println(s"EXPECTED: ${expectedTransformer(prog)}")
+    println(s"ACTUAL  : ${dslTransformer(prog)}")
+  }
+
 }

@@ -51,6 +51,26 @@ package object yyTransformer {
 
   implicit def repTtoT[T](rep: Rep[T]): T = rep.asInstanceOf[T]
 
+  class IRPostProcessing[C <: Context](ctx: C) extends PostProcessing(ctx)(Nil) {
+    import c.universe._
+
+    class IRPostProcess extends Transformer {
+      override def transform(tree: Tree): Tree = tree match {
+        case q"class $className extends $parentName { ..$stmts }" =>
+          q"class $className extends $parentName { ..${stmts.map(transform(_))} }"
+        case tq"${ _ }.$tp[..$tpArgs]"              => tq"to.$tp[..$tpArgs]"
+        case q"this.lift"                           => q"this.lift"
+        case q"${ _ }.this.$method"                 => q"to.$method"
+        case Apply(Ident(virt @ TermName(t)), args) => q"to.$virt(..${args.map(transform(_))})"
+        case _                                      => super.transform(tree)
+      }
+    }
+
+    override object PostProcess extends (Tree => Tree) {
+      def apply(tree: Tree) = new IRPostProcess().transform(tree)
+    }
+  }
+
   def dsl[T](block: => T): Rep[T] = macro _dsl[T]
 
   def _dsl[T](c: Context)(block: c.Expr[T]): c.Expr[Rep[T]] =
@@ -58,6 +78,16 @@ package object yyTransformer {
       "ch.epfl.data.legobase.deep.DeepYY",
       new PardisRepTransformer[c.type](c),
       None,
+      None,
+      Map("shallow" -> false, "debug" -> 3, "featureAnalysing" -> false, "virtualizeLambda" -> true, "ascriptionTransforming" -> false))(block).asInstanceOf[c.Expr[Rep[T]]]
+
+  def todsl[T](block: => T): Rep[T] = macro _todsl[T]
+
+  def _todsl[T](c: Context)(block: c.Expr[T]): c.Expr[Rep[T]] =
+    YYTransformer[c.type, T](c)(
+      "ch.epfl.data.legobase.deep.DeepYY",
+      new PardisRepTransformer[c.type](c),
+      Some(new IRPostProcessing(c)),
       None,
       Map("shallow" -> false, "debug" -> 3, "featureAnalysing" -> false, "virtualizeLambda" -> true, "ascriptionTransforming" -> false))(block).asInstanceOf[c.Expr[Rep[T]]]
 }
