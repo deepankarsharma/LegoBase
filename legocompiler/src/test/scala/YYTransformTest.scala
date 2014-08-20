@@ -7,6 +7,8 @@ import scala.language.implicitConversions
 
 import org.scalatest.{ FlatSpec, ShouldMatchers, Inspectors }
 import ch.epfl.data.pardis.ir._
+import ch.epfl.data.pardis.ir.CNodes._
+import ch.epfl.data.pardis.ir.CTypes._
 import ch.epfl.data.pardis.ir.pardisTypeImplicits._
 import ch.epfl.data.pardis.optimization._
 import ch.epfl.yinyang._
@@ -18,18 +20,9 @@ import deep._
 class YYTransformTest extends FlatSpec with ShouldMatchers with Inspectors {
 
   def nodesOf(node: PardisNode[_]): Stream[PardisNode[_]] = node match {
-    case PardisBlock(stmts, _) => stmts.toStream.map(_.rhs).flatMap(nodesOf(_))
-    case _                     => Stream(node)
-  }
-
-  implicit val IR: DeepDSL = new DeepDSL {}
-
-  "DeepYY" should "use the implicit IR that is in scope" in {
-    class TestDeep extends DeepYY {
-      import IR._
-
-      def main(): Any = __ifThenElse(unit(true), unit(1), unit(2))
-    }
+    case PardisBlock(stmts, _)       => stmts.toStream.map(_.rhs).flatMap(nodesOf(_))
+    case PardisIfThenElse(_, tb, eb) => Stream(node) ++ nodesOf(tb) ++ nodesOf(eb)
+    case _                           => Stream(node)
   }
 
   "yyTransform" should "lift constants" in {
@@ -63,17 +56,17 @@ class YYTransformTest extends FlatSpec with ShouldMatchers with Inspectors {
     }
   }
 
-  ///*it should "lift while" in {
-  //  val liftedWhile = yyTransformer.dsl {
-  //    while (List().isEmpty) {
-  //      1
-  //    }
-  //  }
-  //  liftedWhile.isInstanceOf[ExpressionSymbol[_]] should be(true)
-  //  forExactly(1, nodesOf(liftedWhile.correspondingNode)) { n =>
-  //    n.isInstanceOf[PardisWhile] should be(true)
-  //  }
-  //}*/
+  it should "lift while" ignore {
+    /*val liftedWhile = yyTransformer.dsl {
+      while (List().isEmpty) {
+        1
+      }
+    }
+    liftedWhile.isInstanceOf[ExpressionSymbol[_]] should be(true)
+    forExactly(1, nodesOf(liftedWhile.correspondingNode)) { n =>
+      n.isInstanceOf[PardisWhile] should be(true)
+    }*/
+  }
 
   it should "lift variables" in {
     val liftedAssign = yyTransformer.dsl {
@@ -98,43 +91,30 @@ class YYTransformTest extends FlatSpec with ShouldMatchers with Inspectors {
     }
   }
 
-  class TestTransformer(override val IR: ScalaToC) extends TopDownTransformerTraverser[ScalaToC] {
-    import CNodes._
-    import CTypes._
+  class TestTransformer(override val IR: ScalaToC) extends TopDownTransformerTraverser[ScalaToC]
+
+  trait ShallowC {
+    def fscanf(f: K2DBScanner, s: String, l: Any*): Int = ???
+    def popen(f: String, s: Any): FILE = ???
+    def pclose(f: FILE): Unit = ???
+    def eof(): Int = ???
+    // Control statements
+    def break(): Unit = ???
+    // Memory reference and allocation
+    def &[T](v: T): Pointer[T] = ???
+    def *[T](v: Pointer[T]): T = ???
+    def malloc[T](numElems: Int): Pointer[T] = ???
+    def structCopy[T](s: Pointer[T], orig: T): Unit = ???
+    def gettimeofday(tv: Pointer[TimeVal]): Unit = ???
+    def timeval_subtract(tv1: Pointer[TimeVal], tv2: Pointer[TimeVal], tv3: Pointer[TimeVal]): Long = ???
+    def readVar[T](v: T): T = ???
   }
 
   "Transformations using yyTransform" should "make lowering to C nicer" in {
+    import yyTransformer.repTtoT
     implicit val IR = new ScalaToC {}
-    val expectedTransformer = new TestTransformer(IR) {
-      import IR._
-      override def transformDef[T: PardisType](node: from.Def[T]): to.Def[T] = node match {
-        case K2DBScannerNext_int(s) =>
-          val v = readVar(__newVar[Int](0))
-          __ifThenElse[Unit](infix_==(fscanf(s, unit("%d|"), &(v)), eof), break, unit(()))
-          ReadVal(v)
-        case _ => super.transformDef(node)
-      }
-    }
 
-    val dslTransformer = new TestTransformer(IR) {
-      import ch.epfl.data.pardis.ir.CTypes._
-      import yyTransformer.repTtoT
-
-      def fscanf(f: K2DBScanner, s: String, l: Any*): Int = ???
-      def popen(f: String, s: Any): FILE = ???
-      def pclose(f: FILE): Unit = ???
-      def eof(): Int = ???
-      // Control statements
-      def break(): Unit = ???
-      // Memory reference and allocation
-      def &[T](v: T): Pointer[T] = ???
-      def *[T](v: Pointer[T]): T = ???
-      def malloc[T](numElems: Int): Pointer[T] = ???
-      def structCopy[T](s: Pointer[T], orig: T): Unit = ???
-      def gettimeofday(tv: Pointer[TimeVal]): Unit = ???
-      def timeval_subtract(tv1: Pointer[TimeVal], tv2: Pointer[TimeVal], tv3: Pointer[TimeVal]): Long = ???
-      def readVar[T](v: T): T = ???
-
+    val dslTransformer = new TestTransformer(IR) with ShallowC {
       override def transformDef[T: PardisType](node: from.Def[T]): to.Def[T] = node match {
         case IR.K2DBScannerNext_int(s) =>
           val v = yyTransformer.todsl {
@@ -153,9 +133,18 @@ class YYTransformTest extends FlatSpec with ShouldMatchers with Inspectors {
       IR.k2DBScannerNext_int(scanner)
     }
 
-    println(s"ORIGINAL: $prog")
-    println(s"EXPECTED: ${expectedTransformer(prog)}")
-    println(s"ACTUAL  : ${dslTransformer(prog)}")
+    nodesOf(dslTransformer(prog)).map(_.getClass) should contain inOrder (
+      classOf[IR.K2DBScannerNew],
+      classOf[PardisNewVar[_]],
+      classOf[PardisReadVar[_]],
+      classOf[PTRADDRESS[_]],
+      classOf[FScanf],
+      classOf[EOF],
+      classOf[IR.Equal[_, _]],
+      classOf[PardisIfThenElse[_]],
+      classOf[Break],
+      classOf[PardisReadVal[_]])
+
   }
 
 }
