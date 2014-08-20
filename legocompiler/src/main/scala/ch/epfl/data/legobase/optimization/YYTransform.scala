@@ -50,6 +50,7 @@ package object yyTransformer {
   type TypeRep[T] = PardisType[T]
 
   implicit def repTtoT[T](rep: Rep[T]): T = rep.asInstanceOf[T]
+  implicit def defTtoT[T: PardisType](rep: PardisNode[T]): T = rep.asInstanceOf[T]
 
   class IRPostProcessing[C <: Context](ctx: C) extends PostProcessing(ctx)(Nil) {
     import c.universe._
@@ -61,6 +62,7 @@ package object yyTransformer {
         case tq"${ _ }.$tp[..$tpArgs]"              => tq"to.$tp[..$tpArgs]"
         case q"this.lift"                           => q"this.lift"
         case q"repTtoT"                             => q"this.repTtoT"
+        case q"defTtoT"                             => q"to.toAtom"
         case q"${ _ }.this.$method"                 => q"to.$method"
         case Apply(Ident(virt @ TermName(t)), args) => q"to.$virt(..${args.map(transform(_))})"
         case _                                      => super.transform(tree)
@@ -76,7 +78,7 @@ package object yyTransformer {
     import c.universe._
 
     override def rep(inType: Type): Tree = inType match {
-      case TypeRef(_, s, args) if s.fullName == "ch.epfl.data.pardis.ir.Expression" || s.fullName == "ch.epfl.data.pardis.ir.Base.Rep" =>
+      case TypeRef(_, s, args) if s.fullName == "ch.epfl.data.pardis.ir.Expression" || s.fullName == "ch.epfl.data.pardis.ir.Base.Rep" || s.fullName == "ch.epfl.data.pardis.ir.PardisStruct" =>
         AppliedTypeTree(Select(This(TypeName(className)), TypeName("Rep")), args.map(TypeTree(_)))
       case _ =>
         super.rep(inType)

@@ -112,7 +112,7 @@ class YYTransformTest extends FlatSpec with ShouldMatchers with Inspectors {
 
   "Transformations using yyTransform" should "make lowering to C nicer" in {
     import yyTransformer.repTtoT
-    implicit val IR = new ScalaToC {}
+    val IR = new ScalaToC {}
 
     val dslTransformer = new TestTransformer(IR) with ShallowC {
       override def transformDef[T: PardisType](node: from.Def[T]): to.Def[T] = node match {
@@ -144,7 +144,48 @@ class YYTransformTest extends FlatSpec with ShouldMatchers with Inspectors {
       classOf[PardisIfThenElse[_]],
       classOf[Break],
       classOf[PardisReadVal[_]])
+  }
 
+  it should "cope with TypeReps" in {
+    import yyTransformer.{ repTtoT, defTtoT }
+    val IR = new ScalaToC {}
+    val dslTransformer = new TestTransformer(IR) with ShallowC {
+      // Dummy class for referring to case class type arguments
+      class X
+      override def transformDef[T: PardisType](node: from.Def[T]): to.Def[T] = (node match {
+        case us @ PardisStruct(tag, elems) =>
+          val s = us.asInstanceOf[PardisStruct[X]]
+          implicit val stp = s.tp.asInstanceOf[PardisType[X]]
+
+          val x = yyTransformer.todsl {
+            val x = malloc[X](1)
+            structCopy[X](x, s) //TODO: this annotation shouldn't be needed
+            x
+          }
+          IR.ReadVal(x)
+
+        case _ => super.transformDef(node)
+      }).asInstanceOf[to.Def[T]]
+    }
+
+    val prog = IR.reifyBlock {
+      IR.record_new[Int](Seq(("a", false, IR.unit(1)), ("b", false, IR.unit('c'))))
+    }
+
+    nodesOf(dslTransformer(prog)).map(_.getClass) should contain inOrder (
+      classOf[Malloc[_]],
+      classOf[PardisStruct[_]],
+      classOf[StructCopy[_]],
+      classOf[PardisReadVal[_]])
+
+    forExactly(1, nodesOf(dslTransformer(prog))) { n =>
+      n.getClass should be(classOf[Malloc[_]])
+      n.asInstanceOf[Malloc[_]].typeT should be(typeInt)
+    }
+    forExactly(1, nodesOf(dslTransformer(prog))) { n =>
+      n.getClass should be(classOf[PardisReadVal[_]])
+      n.tp should be(typePointer(typeInt))
+    }
   }
 
 }
