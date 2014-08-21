@@ -159,7 +159,7 @@ class YYTransformTest extends FlatSpec with ShouldMatchers with Inspectors {
     val IR = new ScalaToC {}
     val dslTransformer = new TestTransformer(IR) with ShallowC {
       override def transformDef[T: PardisType](node: from.Def[T]): to.Def[T] = (node match {
-        case us @ PardisStruct(tag, elems) =>
+        case us @ PardisStruct(tag, elems, methods) =>
           val s = us.asInstanceOf[PardisStruct[X]]
           implicit val stp = s.tp.asInstanceOf[PardisType[X]]
 
