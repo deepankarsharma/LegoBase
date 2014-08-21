@@ -250,4 +250,47 @@ class YYTransformTest extends FlatSpec with ShouldMatchers with Inspectors {
       n.tp should be(typeRep[Pointer[CArray[Array[Char]]]])
     }
   }
+
+  "TypeRep fixes" should "avoid TypeRep annotations in cases with a single type argument" in {
+    val IR = new ScalaToC {}
+    import IR._
+    val dslTransformer = new TestTransformer(IR) {
+      import yyTransformer.fixTypeReps
+      override def transformDef[T: PardisType](node: from.Def[T]): to.Def[T] = (node match {
+        /*case us @ PardisStruct(_, _) =>
+          fixTypeReps(us) { implicit tp: PardisType[X] =>
+            (s: PardisStruct[X]) =>
+              val x = malloc[X](1)
+              structCopy(x, s)
+              ReadVal(x)
+          }*/
+
+        case a @ ArrayNew(x) =>
+          fixTypeReps(a) { implicit tp: PardisType[X] =>
+            (a: ArrayNew[X]) =>
+              // Allocate original array
+              val array = {
+                if (typeRep[X].isPrimitive) malloc[X](x)
+                else malloc[Pointer[X]](x)
+              }
+              // Create wrapper with length
+              val s = __new[CArray[Array[X]]](("array", false, array), ("length", false, x))
+              val m = malloc[CArray[Array[X]]](unit(1))
+              structCopy(m, s)
+              ReadVal(m)
+          }
+      }).asInstanceOf[to.Def[T]]
+    }
+
+    val prog = reifyBlock {
+      arrayNew[Char](unit(5))
+    }
+
+    forExactly(1, nodesOf(dslTransformer(prog))) { n =>
+      n.getClass should be(classOf[PardisReadVal[_]])
+      n.tp should be(typeRep[Pointer[CArray[Array[Char]]]])
+    }
+
+  }
+
 }

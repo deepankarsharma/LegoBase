@@ -4,6 +4,7 @@ package deep
 
 import scala.language.experimental.macros
 import scala.language.implicitConversions
+import scala.language.higherKinds
 import scala.reflect.macros.blackbox.Context
 import scala.reflect.runtime.universe._
 
@@ -15,7 +16,6 @@ import ch.epfl.yinyang.typetransformers._
 import ch.epfl.yinyang.transformers._
 
 import deep._
-import shallow.CLibrary._
 
 abstract class DeepYY extends DeepDSL with BaseYinYang with FullyUnstaged with Stager {
   implicit object LiftBoolean extends LiftEvidence[Boolean, Rep[Boolean]] {
@@ -104,4 +104,21 @@ package object yyTransformer {
       Some(new IRPostProcessing(c)),
       None,
       Map("shallow" -> false, "debug" -> 0, "featureAnalysing" -> false, "virtualizeLambda" -> true, "ascriptionTransforming" -> false))(block).asInstanceOf[c.Expr[Rep[T]]]
+
+  def fixTypeReps[D[_], X, U](node: D[_])(block: PardisType[X] => D[X] => U): U = macro _fixTypeReps[D, X, U]
+
+  def _fixTypeReps[D[_], X, U](c: Context)(node: c.Expr[D[_]])(block: c.Expr[PardisType[X] => D[X] => U]): c.Expr[U] = {
+    import c.universe._
+    val q"$origNode" = node.tree
+    block.tree match {
+      case q"(..$params1) => (..$params2) => { ..$stmts }" =>
+        val ValDef(_, _, tq"${ _ }.PardisType[$tpX]", EmptyTree) = params1.head
+        val ValDef(_, _, tq"$tpD[$tpX2]", EmptyTree) = params2.head
+
+        val tree = q"""
+          ${block.tree}($origNode.typeT.asInstanceOf[PardisType[$tpX]])($origNode.asInstanceOf[$tpD[$tpX]])
+        """
+        c.Expr[U](tree)
+    }
+  }
 }
