@@ -91,7 +91,14 @@ class YYTransformTest extends FlatSpec with ShouldMatchers with Inspectors {
     }
   }
 
-  class TestTransformer(override val IR: ScalaToC) extends TopDownTransformerTraverser[ScalaToC]
+  import yyTransformer.{ repTtoT, defTtoT }
+
+  class TestTransformer(override val IR: ScalaToC) extends TopDownTransformerTraverser[ScalaToC] {
+    // Dummy classes for referring to case class type arguments
+    class X
+    class Y
+    class Z
+  }
 
   trait ShallowC {
     def fscanf(f: K2DBScanner, s: String, l: Any*): Int = ???
@@ -108,10 +115,12 @@ class YYTransformTest extends FlatSpec with ShouldMatchers with Inspectors {
     def gettimeofday(tv: Pointer[TimeVal]): Unit = ???
     def timeval_subtract(tv1: Pointer[TimeVal], tv2: Pointer[TimeVal], tv3: Pointer[TimeVal]): Long = ???
     def readVar[T](v: T): T = ???
+
+    //TODO: this doesn't really belong in ShallowC
+    def newRecord[T](args: (String, Boolean, Any)*): T = ???
   }
 
   "Transformations using yyTransform" should "make lowering to C nicer" in {
-    import yyTransformer.repTtoT
     val IR = new ScalaToC {}
 
     val dslTransformer = new TestTransformer(IR) with ShallowC {
@@ -147,11 +156,8 @@ class YYTransformTest extends FlatSpec with ShouldMatchers with Inspectors {
   }
 
   it should "cope with TypeReps" in {
-    import yyTransformer.{ repTtoT, defTtoT }
     val IR = new ScalaToC {}
     val dslTransformer = new TestTransformer(IR) with ShallowC {
-      // Dummy class for referring to case class type arguments
-      class X
       override def transformDef[T: PardisType](node: from.Def[T]): to.Def[T] = (node match {
         case us @ PardisStruct(tag, elems) =>
           val s = us.asInstanceOf[PardisStruct[X]]
@@ -188,4 +194,60 @@ class YYTransformTest extends FlatSpec with ShouldMatchers with Inspectors {
     }
   }
 
+  it should "cope with more complicated TypeReps" in {
+    val IR = new ScalaToC {}
+    val dslTransformer = new TestTransformer(IR) with ShallowC {
+      override def transformDef[T: PardisType](node: from.Def[T]): to.Def[T] = (node match {
+        case ua @ IR.ArrayNew(x) =>
+          // Get type of elements stored in array
+          implicit val elemType = ua.typeT.asInstanceOf[PardisType[X]]
+          val a = ua.asInstanceOf[IR.ArrayNew[X]]
+
+          // Allocate original array
+          val array = {
+            if (typeRep[X].isPrimitive) IR.malloc[X](x)
+            else IR.malloc[Pointer[X]](x)
+          }
+          // Create wrapper with length
+          val s = IR.__new[CArray[Array[X]]](("array", false, array), ("length", false, x))
+          val m = IR.malloc[CArray[Array[X]]](IR.unit(1))
+          IR.structCopy(m, s)
+          IR.ReadVal(m)
+
+        //TODO: non-virtualized if-then-else
+        /*val r = yyTransformer.todsl {
+            // Allocate original array
+            val array = {
+              val prim = malloc[X](x)
+              val nonPrim = malloc[Pointer[X]](x)
+              if (typeRep[X].isPrimitive) prim else nonPrim
+            }
+            // Create wrapper with length
+            val s = newRecord[CArray[Array[X]]](("array", false, array), ("length", false, x))
+            val m = malloc[CArray[Array[X]]](1)
+            structCopy(m, s)
+            m
+          }
+          IR.ReadVal(r)*/
+
+        case _ => super.transformDef(node)
+      }).asInstanceOf[to.Def[T]]
+    }
+
+    val prog = IR.reifyBlock {
+      IR.arrayNew[Char](IR.unit(5))
+    }
+
+    //TODO: check there is an array somewhere in there
+    nodesOf(dslTransformer(prog)).map(_.getClass) should contain allOf (
+      classOf[Malloc[_]],
+      classOf[PardisStruct[_]],
+      classOf[StructCopy[_]],
+      classOf[PardisReadVal[_]])
+
+    forExactly(1, nodesOf(dslTransformer(prog))) { n =>
+      n.getClass should be(classOf[PardisReadVal[_]])
+      n.tp should be(typeRep[Pointer[CArray[Array[Char]]]])
+    }
+  }
 }
