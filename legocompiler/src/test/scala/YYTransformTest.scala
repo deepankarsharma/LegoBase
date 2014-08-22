@@ -4,6 +4,7 @@ package optimization
 package test
 
 import scala.language.implicitConversions
+import scala.collection.mutable.MutableList
 
 import org.scalatest.{ FlatSpec, ShouldMatchers, Inspectors }
 import ch.epfl.data.pardis.ir._
@@ -19,10 +20,19 @@ import deep._
 
 class YYTransformTest extends FlatSpec with ShouldMatchers with Inspectors {
 
-  def nodesOf(node: PardisNode[_]): Stream[PardisNode[_]] = node match {
-    case PardisBlock(stmts, _)       => stmts.toStream.map(_.rhs).flatMap(nodesOf(_))
-    case PardisIfThenElse(_, tb, eb) => Stream(node) ++ nodesOf(tb) ++ nodesOf(eb)
-    case _                           => Stream(node)
+  class TestTraverser[Lang <: Base](val IR: Lang, nodes: MutableList[PardisNode[_]]) extends Traverser[Lang] {
+    override def traverseDef(node: Lang#Def[_]): Unit = {
+      nodes += node
+      super.traverseDef(node)
+    }
+  }
+
+  def nodesOf(node: PardisNode[_]): List[PardisNode[_]] = {
+    val IR = new ScalaToC {}
+    val nodes = MutableList[PardisNode[_]]()
+    val traverser = new TestTraverser(IR, nodes)
+    traverser.traverseDef(node)
+    nodes.toList
   }
 
   "yyTransform" should "lift constants" in {
@@ -238,13 +248,16 @@ class YYTransformTest extends FlatSpec with ShouldMatchers with Inspectors {
       IR.arrayNew[Char](IR.unit(5))
     }
 
-    //TODO: check there is an array somewhere in there
     nodesOf(dslTransformer(prog)).map(_.getClass) should contain allOf (
       classOf[Malloc[_]],
       classOf[PardisStruct[_]],
       classOf[StructCopy[_]],
       classOf[PardisReadVal[_]])
 
+    forExactly(1, nodesOf(dslTransformer(prog))) { n =>
+      n.getClass should be(classOf[PardisStruct[_]])
+      n.tp should be(typeRep[CArray[Array[Char]]])
+    }
     forExactly(1, nodesOf(dslTransformer(prog))) { n =>
       n.getClass should be(classOf[PardisReadVal[_]])
       n.tp should be(typeRep[Pointer[CArray[Array[Char]]]])
