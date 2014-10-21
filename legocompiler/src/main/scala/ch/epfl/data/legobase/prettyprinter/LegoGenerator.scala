@@ -7,21 +7,11 @@ import pardis.ir._
 import pardis.prettyprinter._
 import scala.language.implicitConversions
 
-class LegoScalaGenerator(val shallow: Boolean = false, val outputFileName: String = "generatedProgram") extends ScalaCodeGenerator {
-
-  def getShallowHeader: String = if (shallow) """
-import queryengine._
-import queryengine.push._
-import queryengine.TPCHRelations._
-import pardis.shallow._
-  """
-  else
-    ""
+class LegoScalaGenerator(val outputFileName: String = "generatedProgram") extends ScalaCodeGenerator {
 
   override def getHeader: Document = s"""package ch.epfl.data
 package legobase
 
-$getShallowHeader
 import scala.collection.mutable.Set
 import scala.collection.mutable.HashMap
 import scala.collection.mutable.TreeSet
@@ -52,7 +42,7 @@ object OrderingFactory {
   }
 }
 
-class LegoCGenerator(val shallow: Boolean = false, val outputFileName: String = "generatedProgram", val verb: Boolean = false) extends CCodeGenerator(verb) {
+class LegoCGenerator(val outputFileName: String = "generatedProgram", val verb: Boolean = false) extends CCodeGenerator(verb) {
   def apply(program: PardisProgram) {
     generate(program, outputFileName)
   }
