@@ -5,6 +5,7 @@
 *.swn
 
 # sbt specific
+lib/*
 .cache/
 .history/
 .lib/
