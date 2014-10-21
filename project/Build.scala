@@ -30,13 +30,17 @@ object LegoBuild extends Build {
   }
 
   def generatorSettings: Seq[Setting[_]] = Seq(
-    libraryDependencies ++= Seq("ch.epfl.data" % "purgatory-core_2.11" % "0.1-SNAPSHOT",
-      "ch.epfl.data" % "purgatory_2.11" % "0.1-SNAPSHOT"
-      ),
+    // libraryDependencies ++= Seq("ch.epfl.data" % "purgatory-core_2.11" % "0.1-SNAPSHOT",
+    //   "ch.epfl.data" % "purgatory_2.11" % "0.1-SNAPSHOT"
+    //   ),
     generatorMode := false,
     scalacOptions ++= {
       if(generatorMode.value) {
-        val cpath = update.value.matching(configurationFilter()).classpath
+        val cpath = {
+          val orig = update.value.matching(configurationFilter()).classpath
+          val unmanged = (baseDirectory.value / "lib" ** "*.jar").classpath
+          orig ++ unmanged
+        }
         val plugin = cpath.files.find(_.getName contains "purgatory_").get.absString
         val purgatory_core = cpath.files.find(_.getName contains "purgatory-core").get.absString
         val yy_core = cpath.files.find(_.getName contains "yinyang-core").get.absString
@@ -68,7 +72,7 @@ object LegoBuild extends Build {
 
     resourceDirectory in Compile <<= baseDirectory / "config",
 
-    unmanagedSourceDirectories in Compile += baseDirectory.value / "java-src",
+    // unmanagedSourceDirectories in Compile += baseDirectory.value / "java-src",
 
     // testing
     parallelExecution in Test := false,
@@ -93,15 +97,15 @@ object LegoBuild extends Build {
   lazy val lego_core       = Project(id = "lego-core",        base = file("lego"),
    settings = defaults ++ generatorSettings ++  Seq(
      name := "lego-core",
-     scalacOptions ++= Seq("-optimize"),
-     libraryDependencies += "ch.epfl.data" % "pardis-library_2.11" % "0.1-SNAPSHOT")) // hack for being able to generate implementations
+     scalacOptions ++= Seq("-optimize")/*,
+     libraryDependencies += "ch.epfl.data" % "pardis-library_2.11" % "0.1-SNAPSHOT"*/)) // hack for being able to generate implementations
   lazy val legolifter = Project(id = "legolifter", base = file("legolifter"),
     settings = defaults ++ generatorSettings ++ Seq(name := "legolifter"))
     .dependsOn(lego_core)
   lazy val legocompiler = Project(id = "legocompiler", base = file("legocompiler"), settings = defaults ++ Seq(name := "legocompiler",
-      libraryDependencies ++= Seq("ch.epfl.lamp" % "scala-yinyang_2.11" % "0.2.0-SNAPSHOT",
-        "ch.epfl.data" % "pardis-compiler_2.11" % "0.1-SNAPSHOT"
-        ),
+      // libraryDependencies ++= Seq("ch.epfl.lamp" % "scala-yinyang_2.11" % "0.2.0-SNAPSHOT",
+      //   "ch.epfl.data" % "pardis-compiler_2.11" % "0.1-SNAPSHOT"
+      //   ),
       generate_test <<= inputTask { (argTask: TaskKey[Seq[String]]) =>
         (argTask, sourceDirectory in Test, fullClasspath in Compile, runner in Compile, streams) map { (args, srcDir, cp, r, s) =>
           if(args(2).startsWith("Q")) {

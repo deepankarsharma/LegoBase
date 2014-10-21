@@ -5,7 +5,7 @@
 *.swn
 
 # sbt specific
-lib/*
+lego/lib/*
 .cache/
 .history/
 .lib/
