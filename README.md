@@ -14,7 +14,7 @@ To generate code the first command that must be run is:
 in project legocompiler
 
 To generate C code, you can run the following command in the legocompiler project in sbt:
-`run DATA_FOLDER N QX`
+`run DATA_FOLDER N QX_C`
 where N is the TPCH scaling factor and X in [0,22]
 The generated code will appear in the generator-out folder, which can then be compiled using a traditional C compiler (CLANG/GCC).
 
