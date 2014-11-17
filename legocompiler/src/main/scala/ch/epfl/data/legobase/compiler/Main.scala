@@ -24,8 +24,19 @@ object Main extends LegoRunner {
       System.exit(0)
     }
     Config.checkResults = false
+    if (args.length == 3 && args(2) == "testsuite-all") {
+      System.out.println("Running everything!")
+      for (conf <- List(Case2, Case3)) {
+        expConfig = conf
+        for (target <- List("c", "scala")) {
+          run(Array(args(0), args(1), s"testsuite-$target"))
+          System.out.println(s"Done with generating $target and $conf")
+        }
+      }
 
-    run(args)
+    } else {
+      run(args)
+    }
   }
 
   /* For the moment this transformation is only valid for C code generation */
@@ -82,31 +93,44 @@ object Main extends LegoRunner {
     }
   }
 
+  sealed trait ExpConfig
+  case object Case1 extends ExpConfig
+  case object Case2 extends ExpConfig
+  case object Case3 extends ExpConfig
+  case object Case4 extends ExpConfig
+
+  var expConfig: ExpConfig = Case4
+
   def compileQuery(context: LoweringLegoBase, block: pardis.ir.PardisBlock[Unit], number: Int, shallow: Boolean, generateCCode: Boolean) {
     val pipeline = new TransformerPipeline()
     pipeline += LBLowering(generateCCode)
     pipeline += ParameterPromotion
-    pipeline += DCE
-    pipeline += PartiallyEvaluate
 
-    if (generateCCode) {
-      //pipeline += ColumnStoreTransformer
+    expConfig match {
+      case Case1 =>
+      case _ =>
+        pipeline += DCE
+        pipeline += PartiallyEvaluate
+        expConfig match {
+          case Case2 =>
+          case _ =>
+            if (generateCCode) {
+              //pipeline += ColumnStoreTransformer
+              // pipeline += PartiallyEvaluate
+            }
+            expConfig match {
+              case Case3 =>
+              case _     => pipeline += HashMapHoist
+            }
+            pipeline += HashMapToArrayTransformer(generateCCode)
+            //pipeline += MemoryManagementTransfomer //NOTE FIX TOPOLOGICAL SORT :-(
+            pipeline += PartiallyEvaluate
+            pipeline += SingletonArrayToValueTransformer
+        }
     }
 
-    pipeline += PartiallyEvaluate
-    pipeline += HashMapHoist
-    pipeline += HashMapToArrayTransformer(generateCCode)
-    //pipeline += MemoryManagementTransfomer //NOTE FIX TOPOLOGICAL SORT :-(
-
-    //pipeline += ParameterPromotion
-
-    //pipeline += DCE
-
-    pipeline += PartiallyEvaluate
-    pipeline += SingletonArrayToValueTransformer
-
     if (generateCCode) pipeline += CTransformersPipeline
-    pipeline += TreeDumper
+    // pipeline += TreeDumper
 
     pipeline += DCECLang //NEVER REMOVE!!!!
 
@@ -115,8 +139,8 @@ object Main extends LegoRunner {
     // Convert to program
     val ir2Program = new { val IR = context } with IRToProgram {}
     val finalProgram = ir2Program.createProgram(finalBlock)
-    if (generateCCode) (new LegoCGenerator(shallow, "Q" + number, false)).apply(finalProgram)
-    else (new LegoScalaGenerator(shallow, "Q" + number)).apply(finalProgram)
+    if (generateCCode) (new LegoCGenerator(shallow, s"Q$number$expConfig", false)).apply(finalProgram)
+    else (new LegoScalaGenerator(shallow, s"Q$number$expConfig")).apply(finalProgram)
   }
 }
 
