@@ -6,6 +6,7 @@ VERBOSE=true
 
 #rm *.out
 #make
+SUFFIX=Case4
 
 TMPFILE="tmpfile.txt"
 if [ "`uname`" == "Linux" ]; then
@@ -15,13 +16,14 @@ else
     TMPFILE=`mktemp -q /tmp/tmp.XXXXXX`
 fi
 
-for f in `ls *.out`
+for f in `ls *${SUFFIX}.out`
 do
-    QUERY=`echo $f | cut -d'.' -f1`
+    QUERY=`echo $f | cut -d'.' -f1 | sed 's/'${SUFFIX}'//g'`
     echo "Running query $QUERY..."
     ./$f 1> $TMPFILE 
     # check results
 	RESULTS=`cat $TMPFILE | grep -v "Generated code run in"`
+	echo `cat $TMPFILE | grep "Generated code run in"`
     CORR_RESULTS_1=`cat ./../results/$QUERY.result_sf$SF`
     CORR_RESULTS=${CORR_RESULTS_1}
     for (( i = 1; i < $NUMRUNS; i+=1 ))

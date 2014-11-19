@@ -14,7 +14,8 @@ import pardis.shallow.utils.DefaultValue
 object HashMapToArrayTransformer {
   def apply(generateCCode: Boolean) = new TransformerHandler {
     def apply[Lang <: Base, T: PardisType](context: Lang)(block: context.Block[T]): context.Block[T] = {
-      new HashMapToArrayTransformer(context.asInstanceOf[LoweringLegoBase], generateCCode).optimize(block)
+      val b0 = new HashMapToArrayTransformer(context.asInstanceOf[LoweringLegoBase], generateCCode).optimize(block)
+      new BucketLoweringTransformer(context.asInstanceOf[LoweringLegoBase], generateCCode).optimize(b0)
     }
   }
 }
@@ -161,20 +162,9 @@ class HashMapToArrayTransformer(override val IR: LoweringLegoBase, val generateC
       val arr = arrayNew(size)(typeB)
       val index = __newVar[Int](0)
       __whileDo(readVar(index) < size, {
-        // Replacing malloc with structnew for Scala/C intercompatibility
-        //val init = toAtom(Malloc(unit(1))(typeB))(typeB.asInstanceOf[PardisType[Pointer[Any]]])
-        val s = getStructDef(typeB).get
-        val structFields = s.fields.map(fld => PardisStructArg(fld.name, fld.mutable, {
-          val dflt = if (generateCCode && fld.tpe.isArray) 0 else DefaultValue(fld.tpe.name)
-          infix_asInstanceOf(unit(dflt)(fld.tpe))(fld.tpe)
-        }))
-        val init = toAtom(transformDef(PardisStruct(s.tag, structFields, List())(s.tp).asInstanceOf[to.Def[T]])(typeB.asInstanceOf[PardisType[T]]))(typeB.asInstanceOf[PardisType[T]])
-
+        val init = arrayBufferNew2()(typeB)
         arrayUpdate(arr, readVar(index), init)
-        val e = arrayApply(arr, readVar(index))(typeB)
-        toAtom(PardisStructFieldSetter(e, "next", Constant(null)))
         __assign(index, readVar(index) + unit(1))
-        unit()
       })
       counterMap(arr) = (__newVar[Int](unit(0)), __newVar[Int](unit(0)))
       //Console.err.printf(unit("DONE!\n"))
@@ -189,9 +179,12 @@ class HashMapToArrayTransformer(override val IR: LoweringLegoBase, val generateC
       val et = manValue.typeArguments(0).asInstanceOf[PardisType[Any]]
       val bucket = __newVar(arrayApply(lhm.asInstanceOf[Expression[Array[Any]]], hashKey)(et))(et)
       val counter = getSizeCounterMap(hm)
-      val bucketNext = toAtom(PardisStructFieldGetter(readVar(bucket)(et), "next")(et))(et)
+      //val bucketNext = toAtom(PardisStructFieldGetter(readVar(bucket)(et), "next")(et))(et)
+      //val tmp = readVar(bucket)(bucket.tp.asInstanceOf[TypeRep[Any]]).asInstanceOf[Expression[ArrayBuffer[Any]]]
+      //val bucketNext = arrayBufferApply(tmp, unit(0))(manValue.asInstanceOf[TypeRep[Any]])
       if (counter != null) {
-        __ifThenElse(infix_==(bucketNext, Constant(null)), {
+        __ifThenElse(arrayBufferIsEmpty(bucket), {
+          //infix_==(bucketNext, Constant(null)), {
           __assign(counter, readVar(counter) + unit(1))
         }, unit())
       }
@@ -205,33 +198,26 @@ class HashMapToArrayTransformer(override val IR: LoweringLegoBase, val generateC
       val lhm = transformExp(hm)(hm.tp, typeArray(manValue))
       val counter = getSizeCounterMap(hm)
       val bucket = __newVar(ArrayApply(lhm, hashKey)(manValue))(manValue)
-      val e = __newVar(toAtom(PardisStructFieldGetter(ReadVar(bucket)(manValue), "next")(manValue))(manValue))(manValue)
-      __whileDo({
-        //val eValue = readVar(e)(e.tp)
-        infix_!=(readVar(e)(e.tp), Constant(null)) && {
-          val eValue = readVar(e)(e.tp)
-          //val z = toAtom(PardisStructFieldGetter(e, "key")(key.tp))(key.tp)
-          val extractor = getStructDef(eValue.tp).get.fields.find(f => f.tpe == key.tp).get
-
-          val eeeef = field(eValue, extractor.name)(key.tp)
-          infix_!=(eeeef.asInstanceOf[Expression[Any]], key.asInstanceOf[Expression[Any]])
-        }
-      },
-        {
-          __assign(e, toAtom(PardisStructFieldGetter(readVar(e), "next")(manValue))(manValue))
-        })
-
-      ReadVal(__ifThenElse(infix_==(readVar(e), Constant(null)), {
+      val tmp = readVar(bucket)(manValue)
+      val e = arrayBufferFind(readVar(bucket)(manValue).asInstanceOf[Expression[ArrayBuffer[Any]]],
+        doLambda((elm: Expression[Any]) => {
+          val extractor = getStructDef(elm.tp).get.fields.find(f => f.tpe == key.tp).get
+          val eeeef = field(elm, extractor.name)(key.tp)
+          infix_==(eeeef.asInstanceOf[Expression[Any]], key.asInstanceOf[Expression[Any]])
+        })(manValue.asInstanceOf[TypeRep[Any]], typeBoolean))(manValue.asInstanceOf[TypeRep[Any]])
+      ReadVal(__ifThenElse(infix_==(e, Constant(null)), {
         //val next = toAtom(transformBlockTyped(v)(v.tp, manValue))(manValue)
         val tBlock = transformBlockTyped(v)(v.tp, manValue)
         tBlock.stmts.foreach(transformStmToMultiple)
         val next = tBlock.res
         __assign(counter, readVar(counter) + unit(1))
-        val headNext = toAtom(PardisStructFieldGetter(ReadVar(bucket)(manValue), "next")(manValue))
-        toAtom(PardisStructFieldSetter(next, "next", headNext))
-        toAtom(PardisStructFieldSetter(ReadVar(bucket)(manValue), "next", next))
+        // val headNext = toAtom(PardisStructFieldGetter(ReadVar(bucket)(manValue), "next")(manValue))
+        // toAtom(PardisStructFieldSetter(next, "next", headNext))
+        // toAtom(PardisStructFieldSetter(ReadVar(bucket)(manValue), "next", next))
+        // arrayBufferAppend(tmp.asInstanceOf[Expression[ArrayBuffer[Any]]], next)
+        tmp.asInstanceOf[Expression[ArrayBuffer[Any]]].append(next)
         ReadVal(next)(manValue)
-      }, ReadVar(e))(manValue))(manValue)
+      }, e)(manValue.asInstanceOf[TypeRep[Object]]))(manValue.asInstanceOf[TypeRep[Object]])
     }
     case hmcnt @ HashMapContains(hm, k) => {
       implicit val manValue = hm.tp.typeArguments(1).typeArguments(0).asInstanceOf[TypeRep[Value]]
@@ -265,6 +251,7 @@ class HashMapToArrayTransformer(override val IR: LoweringLegoBase, val generateC
         __assign(bucket, ArrayApply(lhm, ReadVar(removeIndex))(manValue))(manValue)
       })
       __assign(numElems, readVar(numElems) - unit(1))
+      // TODO: Refactor/Cleanup
       val headNext = __newVar(toAtom(PardisStructFieldGetter(bucket, "next")(manValue)))(manValue)
       val headNextNext = toAtom(PardisStructFieldGetter(headNext, "next")(manValue))
       toAtom(PardisStructFieldSetter(bucket, "next", headNextNext))
@@ -304,27 +291,6 @@ class HashMapToArrayTransformer(override val IR: LoweringLegoBase, val generateC
       __assign(sizeCounter, readVar(sizeCounter) - unit(1))
       ReadVal(v)
 
-    case aba @ ArrayBufferAppend(a @ Def(rv @ PardisReadVar(f @ PardisVar(ab))), e) =>
-      implicit val manValue = a.tp.typeArguments(0).asInstanceOf[TypeRep[Value]]
-      val head = transformExp(a)(a.tp, manValue) //.asInstanceOf[Expression[Pointer[Any]]]
-
-      val headNext = toAtom(PardisStructFieldGetter(head, "next")(manValue))
-      // Connect e
-      toAtom(PardisStructFieldSetter(e, "next", headNext))
-      toAtom(PardisStructFieldSetter(e, "prev", head))
-      // Update head
-      toAtom(PardisStructFieldSetter(head, "next", e))
-      // Update headNext
-      __ifThenElse(infix_!=(headNext, Constant(null)), {
-        toAtom(PardisStructFieldSetter(headNext, "prev", e))
-      }, unit())
-      ReadVal(Constant(true))
-
-    case ArrayBufferApply(a @ Def(rv @ PardisReadVar(f @ PardisVar(ab))), idx) =>
-      implicit val manValue = ab.tp.typeArguments(0).asInstanceOf[TypeRep[Value]]
-      val aVarNext = toAtom(PardisStructFieldGetter(ab, "next")(manValue))(manValue)
-      __assign(f.asInstanceOf[PardisVar[Any]], aVarNext)
-      ReadVar(f)
     case ArrayBufferRemove(a @ Def(rv @ PardisReadVar(f @ PardisVar(ab))), y) =>
       implicit val manValue = ab.tp.typeArguments(0).asInstanceOf[TypeRep[Value]]
       //printf(unit("Removing from list\n"))
@@ -339,22 +305,45 @@ class HashMapToArrayTransformer(override val IR: LoweringLegoBase, val generateC
         __assign(numElems, readVar(numElems) - unit(1))
       }, unit())
       ReadVal(Constant(true))
-    case ArrayBufferFoldLeft(a, cnt, Def(Lambda2(fun, input1, input2, o))) => a.correspondingNode match {
-      case rv @ PardisReadVar(f @ PardisVar(ab)) =>
-        var agg = __newVar(cnt)
-        implicit val manValue = ab.tp.typeArguments(0).asInstanceOf[TypeRep[Value]]
-        val init = readVar(f.asInstanceOf[Var[Value]])(manValue)
-        __whileDo(infix_!=(f, Constant(null)), {
-          val z = fun(agg, readVar(f.asInstanceOf[Var[Value]])(manValue))
-          __assign(agg, z)
-          // Advance pointer
-          val aVarNext = toAtom(PardisStructFieldGetter(ab, "next")(manValue))(manValue)
-          __assign(f.asInstanceOf[PardisVar[Any]], aVarNext)
-        })
-        __assign(f.asInstanceOf[PardisVar[Any]], init)
-        ReadVar(agg)
-      case _ => throw new Exception("Internal BUG in HashMapToArrayTransformer. ArrayBuffer should be a Var");
+
+    case OptionGet(x) => x.correspondingNode
+
+    case _            => super.transformDef(node)
+  }).asInstanceOf[to.Def[T]]
+}
+
+class BucketLoweringTransformer(override val IR: LoweringLegoBase, val generateCCode: Boolean) extends Optimizer[LoweringLegoBase](IR) with StructCollector[LoweringLegoBase] {
+  import IR._
+  trait Key
+  trait Value
+
+  def optimize[T: TypeRep](node: Block[T]): to.Block[T] = {
+    traverseBlock(node)
+    transformProgram(node)
+  }
+
+  override def transformDef[T: PardisType](node: Def[T]): to.Def[T] = (node match {
+    case abn @ ArrayBufferNew2() => {
+      val s = getStructDef(abn.typeA).get
+      val structFields = s.fields.map(fld => PardisStructArg(fld.name, fld.mutable, {
+        val dflt = if (generateCCode && fld.tpe.isArray) 0 else DefaultValue(fld.tpe.name)
+        infix_asInstanceOf(unit(dflt)(fld.tpe))(fld.tpe)
+      }))
+      val init = toAtom(transformDef(PardisStruct(s.tag, structFields, List())(s.tp).asInstanceOf[to.Def[T]])(abn.typeA.asInstanceOf[PardisType[T]]))(abn.typeA.asInstanceOf[PardisType[T]])
+      toAtom(PardisStructFieldSetter(init, "next", Constant(null)))
+      ReadVal(init)
     }
+    case ArrayBufferSize(a @ Def(rv @ PardisReadVar(f @ PardisVar(ab)))) =>
+      implicit val manValue = ab.tp.typeArguments(0).asInstanceOf[TypeRep[Value]]
+      val init = readVar(f.asInstanceOf[Var[Value]])(manValue)
+      val count = __newVar[Int](unit(0))
+      __assign(f.asInstanceOf[Var[Value]], toAtom(PardisStructFieldGetter(readVar(f.asInstanceOf[Var[Value]])(manValue), "next")(manValue))(manValue))
+      __whileDo(infix_!=(f, Constant(null)), {
+        __assign(count, readVar(count) + unit(1))
+        __assign(f.asInstanceOf[Var[Value]], toAtom(PardisStructFieldGetter(readVar(f.asInstanceOf[Var[Value]])(manValue), "next")(manValue))(manValue))
+      })
+      __assign(f.asInstanceOf[PardisVar[Any]], init)
+      ReadVar(count)
     case ArrayBufferMinBy(a, f @ Def(Lambda(fun, input, o))) => a.correspondingNode match {
       case rv @ PardisReadVar(f @ PardisVar(ab)) =>
         implicit val manValue = ab.tp.typeArguments(0).asInstanceOf[TypeRep[Value]]
@@ -379,20 +368,64 @@ class HashMapToArrayTransformer(override val IR: LoweringLegoBase, val generateC
         ReadVar(min)
       case _ => throw new Exception("Internal BUG in HashMapToArrayTransformer. ArrayBuffer should be a Var");
     }
-    case ArrayBufferSize(a @ Def(rv @ PardisReadVar(f @ PardisVar(ab)))) =>
+    case ArrayBufferFoldLeft(a, cnt, Def(Lambda2(fun, input1, input2, o))) => a.correspondingNode match {
+      case rv @ PardisReadVar(f @ PardisVar(ab)) =>
+        var agg = __newVar(cnt)
+        implicit val manValue = ab.tp.typeArguments(0).asInstanceOf[TypeRep[Value]]
+        val init = readVar(f.asInstanceOf[Var[Value]])(manValue)
+        __whileDo(infix_!=(f, Constant(null)), {
+          val z = fun(agg, readVar(f.asInstanceOf[Var[Value]])(manValue))
+          __assign(agg, z)
+          // Advance pointer
+          val aVarNext = toAtom(PardisStructFieldGetter(ab, "next")(manValue))(manValue)
+          __assign(f.asInstanceOf[PardisVar[Any]], aVarNext)
+        })
+        __assign(f.asInstanceOf[PardisVar[Any]], init)
+        ReadVar(agg)
+
+      case _ => throw new Exception("Internal BUG in HashMapToArrayTransformer. ArrayBuffer should be a Var");
+    }
+    case aba @ ArrayBufferAppend(a @ Def(rv @ PardisReadVar(f @ PardisVar(ab))), e) =>
       implicit val manValue = ab.tp.typeArguments(0).asInstanceOf[TypeRep[Value]]
-      val init = readVar(f.asInstanceOf[Var[Value]])(manValue)
-      val count = __newVar[Int](unit(0))
-      __assign(f.asInstanceOf[Var[Value]], toAtom(PardisStructFieldGetter(readVar(f.asInstanceOf[Var[Value]])(manValue), "next")(manValue))(manValue))
-      __whileDo(infix_!=(f, Constant(null)), {
-        __assign(count, readVar(count) + unit(1))
-        __assign(f.asInstanceOf[Var[Value]], toAtom(PardisStructFieldGetter(readVar(f.asInstanceOf[Var[Value]])(manValue), "next")(manValue))(manValue))
-      })
-      __assign(f.asInstanceOf[PardisVar[Any]], init)
-      ReadVar(count)
+      val head = transformExp(a)(a.tp, manValue) //.asInstanceOf[Expression[Pointer[Any]]]
 
-    case OptionGet(x) => x.correspondingNode
+      val headNext = toAtom(PardisStructFieldGetter(head, "next")(manValue))
+      // Connect e
+      toAtom(PardisStructFieldSetter(e, "next", headNext))
+      toAtom(PardisStructFieldSetter(e, "prev", head))
+      // Update head
+      toAtom(PardisStructFieldSetter(head, "next", e))
+      // Update headNext
+      __ifThenElse(infix_!=(headNext, Constant(null)), {
+        toAtom(PardisStructFieldSetter(headNext, "prev", e))
+      }, unit())
+      ReadVal(Constant(true))
 
-    case _            => super.transformDef(node)
+    case ArrayBufferApply(a @ Def(rv @ PardisReadVar(f @ PardisVar(ab))), idx) =>
+      implicit val manValue = ab.tp.typeArguments(0).asInstanceOf[TypeRep[Value]]
+      val aVarNext = toAtom(PardisStructFieldGetter(ab, "next")(manValue))(manValue)
+      __assign(f.asInstanceOf[PardisVar[Any]], aVarNext)
+      ReadVar(f)
+    case abf @ ArrayBufferFind(a @ Def(rv @ PardisReadVar(f @ PardisVar(bucket))), func) => {
+      implicit val manValue = bucket.tp.typeArguments(0).asInstanceOf[TypeRep[Value]]
+      __assign(f.asInstanceOf[PardisVar[Any]], toAtom(PardisStructFieldGetter(readVar(f.asInstanceOf[PardisVar[Any]])(manValue.asInstanceOf[TypeRep[Any]]), "next")(manValue))(manValue))
+
+      //val e = f //__newVar(toAtom(PardisStructFieldGetter(ReadVar(bucket)(manValue), "next")(manValue))(manValue))(manValue)
+      __whileDo({
+        //val eValue = readVar(e)(e.tp)
+        infix_!=(readVar(f)(f.tp), Constant(null)) &&
+          infix_!=(__app(func).apply(readVar(f.asInstanceOf[PardisVar[Any]])(manValue.asInstanceOf[TypeRep[Any]])), Constant(true))
+
+      },
+        {
+          __assign(f.asInstanceOf[PardisVar[Any]], toAtom(PardisStructFieldGetter(readVar(f.asInstanceOf[PardisVar[Any]])(manValue.asInstanceOf[TypeRep[Any]]), "next")(manValue))(manValue))
+        })
+      ReadVar(f)(f.tp)
+    }
+    case ArrayBufferIsEmpty(a @ Def(rv @ PardisReadVar(f @ PardisVar(bucket)))) =>
+      val aVarNext = toAtom(PardisStructFieldGetter(ab, "next")(manValue))(manValue)
+      infix_==(aVarNext, unit(null))
+    case _ => super.transformDef(node)
   }).asInstanceOf[to.Def[T]]
-}
+
+}}
