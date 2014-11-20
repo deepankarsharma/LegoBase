@@ -183,7 +183,7 @@ class HashMapToArrayTransformer(override val IR: LoweringLegoBase, val generateC
       //val tmp = readVar(bucket)(bucket.tp.asInstanceOf[TypeRep[Any]]).asInstanceOf[Expression[ArrayBuffer[Any]]]
       //val bucketNext = arrayBufferApply(tmp, unit(0))(manValue.asInstanceOf[TypeRep[Any]])
       if (counter != null) {
-        __ifThenElse(arrayBufferIsEmpty(bucket), {
+        __ifThenElse(arrayBufferIsEmpty(readVar(bucket)(manValue).asInstanceOf[Expression[ArrayBuffer[Any]]]), {
           //infix_==(bucketNext, Constant(null)), {
           __assign(counter, readVar(counter) + unit(1))
         }, unit())
@@ -225,9 +225,12 @@ class HashMapToArrayTransformer(override val IR: LoweringLegoBase, val generateC
       val size = arrayLength(transformExp(hm)(hm.tp, typeArray(hmcnt.typeB)))
       val hashKey = key2Hash(key, size)
       val lhm = transformExp(hm)(hm.tp, typeArray(manValue))
-      val bucket = ArrayApply(lhm, hashKey)(manValue)
-      val elem = PardisStructFieldGetter(bucket, "next")(manValue)
-      ReadVal(infix_!=(elem, unit(null)))
+      val bucket = __newVar(ArrayApply(lhm, hashKey)(manValue))(manValue)
+      // ArrayBufferIsEmpty(readVar(bucket)(manValue).asInstanceOf[Expression[ArrayBuffer[Any]]])
+      val res = !(readVar(bucket)(manValue).asInstanceOf[Expression[ArrayBuffer[Any]]].isEmpty)
+      ReadVal(res)
+      //val elem = PardisStructFieldGetter(bucket, "next")(manValue)
+      //ReadVal(infix_!=(elem, unit(null)))
     }
     case hmapp @ HashMapApply(hm, k) => {
       implicit val manValue = hm.tp.typeArguments(1).typeArguments(0).asInstanceOf[TypeRep[Value]]
@@ -246,16 +249,22 @@ class HashMapToArrayTransformer(override val IR: LoweringLegoBase, val generateC
       val numElems = getSizeCounterMap(hm)
       val removeIndex = getRemoveIndexCounterMap(hm)
       val bucket = __newVar(ArrayApply(lhm, ReadVar(removeIndex))(manValue))(manValue)
-      __whileDo(infix_==(PardisStructFieldGetter(bucket, "next")(manValue), Constant(null)), {
+      //      __whileDo(infix_==(PardisStructFieldGetter(bucket, "next")(manValue), Constant(null)), {
+      __whileDo(arrayBufferIsEmpty(readVar(bucket)(manValue).asInstanceOf[Expression[ArrayBuffer[Any]]]), {
+
         __assign(removeIndex, readVar(removeIndex) + unit(1))
         __assign(bucket, ArrayApply(lhm, ReadVar(removeIndex))(manValue))(manValue)
       })
       __assign(numElems, readVar(numElems) - unit(1))
       // TODO: Refactor/Cleanup
-      val headNext = __newVar(toAtom(PardisStructFieldGetter(bucket, "next")(manValue)))(manValue)
+      //val headNext = __newVar(toAtom(PardisStructFieldGetter(bucket, "next")(manValue)))(manValue)
+      val headNext = arrayBufferApply(readVar(bucket)(manValue).asInstanceOf[Expression[ArrayBuffer[Any]]], unit(0))
       val headNextNext = toAtom(PardisStructFieldGetter(headNext, "next")(manValue))
       toAtom(PardisStructFieldSetter(bucket, "next", headNextNext))
-      ReadVar(headNext)
+      //val tmp = __newVar(readVar(bucket)(manValue).asInstanceOf[Expression[ArrayBuffer[Any]]])
+      //val headNext = arrayBufferApply(tmp, unit(0))
+      //transformDef(ArrayBufferRemove(bucket.asInstanceOf[Var[ArrayBuffer[Any]]], unit(0)))
+      ReadVal(headNext)
     }
     case hmr @ HashMapRemove(hm, k) if !isAggOp(hm) => {
       implicit val manValue = hm.tp.typeArguments(1).typeArguments(0).asInstanceOf[TypeRep[Value]]
@@ -264,7 +273,8 @@ class HashMapToArrayTransformer(override val IR: LoweringLegoBase, val generateC
       val numElems = getSizeCounterMap(hm)
       val removeIndex = getRemoveIndexCounterMap(hm)
       val bucket = __newVar(ArrayApply(lhm, ReadVar(removeIndex))(manValue))(manValue)
-      __whileDo(infix_==(PardisStructFieldGetter(bucket, "next")(manValue), Constant(null)), {
+      //__whileDo(infix_==(PardisStructFieldGetter(bucket, "next")(manValue), Constant(null)), {
+      __whileDo(arrayBufferIsEmpty(readVar(bucket)(manValue).asInstanceOf[Expression[ArrayBuffer[Any]]]), {
         __assign(removeIndex, readVar(removeIndex) + unit(1))
         __assign(bucket, ArrayApply(lhm, ReadVar(removeIndex))(manValue))(manValue)
       })
@@ -422,10 +432,11 @@ class BucketLoweringTransformer(override val IR: LoweringLegoBase, val generateC
         })
       ReadVar(f)(f.tp)
     }
-    case ArrayBufferIsEmpty(a @ Def(rv @ PardisReadVar(f @ PardisVar(bucket)))) =>
+    case ArrayBufferIsEmpty(a @ Def(rv @ PardisReadVar(f @ PardisVar(ab)))) =>
+      implicit val manValue = ab.tp.typeArguments(0).asInstanceOf[TypeRep[Value]]
       val aVarNext = toAtom(PardisStructFieldGetter(ab, "next")(manValue))(manValue)
-      infix_==(aVarNext, unit(null))
+      ReadVal(infix_==(aVarNext, unit(null)))
     case _ => super.transformDef(node)
   }).asInstanceOf[to.Def[T]]
 
-}}
+}
